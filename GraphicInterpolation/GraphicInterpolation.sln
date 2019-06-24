@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.645
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "GraphicInterpolation", "GraphicInterpolation\GraphicInterpolation.vcxproj", "{1E4B2698-8C2C-4077-8C25-18787862904D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1E4B2698-8C2C-4077-8C25-18787862904D}.Debug|x64.ActiveCfg = Debug|x64
+		{1E4B2698-8C2C-4077-8C25-18787862904D}.Debug|x64.Build.0 = Debug|x64
+		{1E4B2698-8C2C-4077-8C25-18787862904D}.Release|x64.ActiveCfg = Release|x64
+		{1E4B2698-8C2C-4077-8C25-18787862904D}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {44776F9F-9F5C-44C7-8A1F-078AA3090E57}
+	EndGlobalSection
+EndGlobal
