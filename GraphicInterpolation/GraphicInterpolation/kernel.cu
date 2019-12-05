@@ -7,9 +7,9 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-#define NEW_IMAGE_SIZE_WIDTH 21 // 7 // 21
-#define NEW_IMAGE_SIZE_HEIGHT 21 // 7 // 21
-#define NEW_IMAGE_REPEAT_NUMBER 5
+#define NEW_IMAGE_SIZE_WIDTH 5 // 7 // 21
+#define NEW_IMAGE_SIZE_HEIGHT 5 // 7 // 21
+#define NEW_IMAGE_REPEAT_NUMBER 6
 
 using namespace cv;
 using namespace std;
@@ -277,75 +277,89 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 		}
 	}
 
-	//Alokowanie macierzy z openCV na GPU
-	uchar *h_imgInPin, *h_imgOutPin;
-	uchar *d_imgIn, *d_imgOut;
+	uchar *h_imgInPin[2], **h_imgOutPin;
+	uchar *d_imgIn[2], *d_imgOut[2];
 
-	cudaStatus = cudaMallocHost((void**)&h_imgInPin, numberOfImages * inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		//goto Error;
-	}
+	//przygotowanie
+	h_imgOutPin = (uchar**)malloc(numberOfImages);
 	for (int i = 0; i < numberOfImages; i++)
 	{
-		memcpy(h_imgInPin + i * (inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar)),
-			inputImages[0].data, inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar));
+		cudaStatus = cudaMallocHost((void**)&h_imgOutPin[i], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMalloc failed!");
+			//goto Error;
+		}
 	}
-
-	cudaStatus = cudaMallocHost((void**)&h_imgOutPin, outputImages[0].rows*outputImages[0].cols * outputImages[0].channels() * sizeof(uchar));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		//goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)&d_imgIn, inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		//goto Error;
-	}
-
-	cudaStatus = cudaMalloc((void**)&d_imgOut, outputImages[0].rows*outputImages[0].cols * outputImages[0].channels() * sizeof(uchar));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		//goto Error;
-	}
-
-	//Wyliczanie potrzebnych stalych
-	int d_imgIn_step = inputImages[0].step;
-	int d_imgOut_step = outputImages[0].step;
-
-	int blockSizeY = outputImages[0].rows / inputImages[0].rows;
-	int blockSizeX = outputImages[0].cols / inputImages[0].cols;
 
 	//Glowna petla programu - dla kazdego zdjecia wykonaj interpolacje
-
-	//Pierwsze wyjatkowe kopiowanie dla pierwszego zdjecia
 	int streamIndex = 0;
-	
-	cudaMemcpyAsync(d_imgIn, h_imgInPin, inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar),
-		cudaMemcpyHostToDevice, streams[streamIndex]);
 
 	for (int i = 0; i < numberOfImages; i++)
 	{
 		int nextStreamIndex = (streamIndex + 1) % numberOfStreams;
+		
+		//Alokowanie macierzy z openCV na GPU
+		if (i + 1 != numberOfImages)
+		{
+			cudaStatus = cudaMallocHost((void**)&h_imgInPin[nextStreamIndex], inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMalloc failed!");
+				//goto Error;
+			}
+			memcpy(h_imgInPin[nextStreamIndex], inputImages[i + 1].data, inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
+
+			cudaStatus = cudaMalloc((void**)&d_imgIn[1], inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMalloc failed!");
+				//goto Error;
+			}
+		}
+
+		cudaStatus = cudaMalloc((void**)&d_imgOut[0], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMalloc failed!");
+			//goto Error;
+		}
+
+		//Pierwsze wyjatkowe kopiowanie dla pierwszego zdjecia
+		if (i == 0)
+		{
+			cudaStatus = cudaMalloc((void**)&d_imgIn[i], inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar));
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMalloc failed!");
+				//goto Error;
+			}
+			cudaMemcpy(d_imgIn[i], inputImages[i].data, inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar),
+				cudaMemcpyHostToDevice);
+		}
+
+		//Wyliczanie potrzebnych stalych
+		int d_imgIn_step = inputImages[i].step;
+		int d_imgOut_step = outputImages[i].step;
+
+		int blockSizeY = outputImages[i].rows / inputImages[i].rows;
+		int blockSizeX = outputImages[i].cols / inputImages[i].cols;
 
 		//Wywolanie kernela
 		const dim3 block(32, 32); //(16, 16);
 		const dim3 grid(16, 16);
 
 		CUDA_kernel_bilinearIntepolation<<<grid, block, 0, streams[streamIndex]>>>(
-			d_imgIn, d_imgIn_step, inputImages[i].channels(),
-			d_imgOut, d_imgOut_step, outputImages[i].rows, outputImages[i].cols,
+			d_imgIn[0], d_imgIn_step, inputImages[i].channels(),
+			d_imgOut[0], d_imgOut_step, outputImages[i].rows, outputImages[i].cols,
 			blockSizeY, blockSizeX);
 
 		//Nie dla ostatniego zdjecia
 		if (i+1 < numberOfImages)
 		{
 			//Laduj kolejne zdjecie
-			cudaMemcpyAsync(d_imgIn, h_imgInPin + (i+1)*inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar), 
+			cudaStatus = cudaMemcpyAsync(d_imgIn[1], h_imgInPin[nextStreamIndex],
 				inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar),
 				cudaMemcpyHostToDevice, streams[nextStreamIndex]);
-			
+			if (cudaStatus != cudaSuccess) {
+				fprintf(stderr, "cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
+				//goto Error;
+			}
 		}
 
 		//Sprawdzenie czy wystapil blad w kernelu
@@ -355,11 +369,47 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 			//goto Error;
 		}
 		
+		cudaFree(d_imgIn[0]);
+		/**/
+		cudaStatus = cudaMalloc((void**)&d_imgIn[0], inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMalloc failed!");
+			//goto Error;
+		}
+		cudaMemcpy(d_imgIn[0], d_imgIn[1], inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar),
+			cudaMemcpyDeviceToDevice);
+		cudaFree(d_imgIn[1]);
+		/**/
+		/*
+		d_imgIn[0] = d_imgIn[1];
+		*/
+		if(i!=0)
+			cudaFree(d_imgOut[1]);
+		/**/
+		cudaStatus = cudaMalloc((void**)&d_imgOut[1], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMalloc failed!");
+			//goto Error;
+		}
+		cudaMemcpy(d_imgOut[1], d_imgOut[0], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar),
+			cudaMemcpyDeviceToDevice);
+		cudaFree(d_imgOut[0]);
+		/**/
+		/*
+		d_imgOut[1] = d_imgOut[0];
+		*/
 		//kopiowanie wyniku
-		cudaMemcpyAsync(h_imgOutPin, d_imgOut, 
+		cudaStatus = cudaMemcpyAsync(h_imgOutPin[i], d_imgOut[1],
 			outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar),
 			cudaMemcpyDeviceToHost, streams[streamIndex]);
-		
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
+			//goto Error;
+		}
+
+		if(i!=0)
+			cudaFreeHost(h_imgInPin[streamIndex]);
+
 		streamIndex = nextStreamIndex;
 	}
 
@@ -369,24 +419,24 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
 		//goto Error;
 	}
-	
+
 	for (int i = 0; i < numberOfImages; i++)
 	{
-		memcpy(outputImages[i].data, h_imgOutPin, 
+		memcpy(outputImages[i].data, h_imgOutPin[i],
 			outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
+		cudaFreeHost(h_imgOutPin[i]);
 	}
 
 	//CUDA FREE
 //Error:
-	cudaFreeHost(h_imgInPin);
-	cudaFreeHost(h_imgOutPin);
-	
-	cudaFree(d_imgIn);
-	cudaFree(d_imgOut);
+	//free(h_imgOutPin);
+	cudaFree(d_imgIn[1]);
+	cudaFree(d_imgOut[1]);
 
 	for (int i = 0; i < numberOfStreams; i++)
 		cudaStreamDestroy(streams[i]);
 
+	cudaStatus = cudaDeviceSynchronize();
 	return cudaStatus;
 }
 
@@ -395,42 +445,44 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 int main(int argc, char **argv) 
 {
     int Xresize, Yresize;
-    string filename;
-    int howManyRepeats;
+    string filename1, filename2;
+    int howManyImages;
     
     if(argc>1)
     {
         Xresize = atoi(argv[1]);
         Yresize = atoi(argv[2]);
-        filename = argv[3];
-        howManyRepeats = atoi(argv[4]);
+        filename1 = argv[3];
+		filename2 = argv[4];
+        howManyImages = atoi(argv[5]);
     }
     else //domyœlnie
     {
         Xresize = NEW_IMAGE_SIZE_WIDTH;
         Yresize = NEW_IMAGE_SIZE_HEIGHT;
-        filename = "./input/Lena.png";
-        howManyRepeats = NEW_IMAGE_REPEAT_NUMBER;
+        filename1 = "./input/Lena.png";
+		filename2 = "./input/Icon.png";
+        howManyImages = NEW_IMAGE_REPEAT_NUMBER;
     }
     
-    printf("Arguments: %d %d %s %d \n", 
-           Xresize, Yresize, filename.c_str(), howManyRepeats);
+    printf("Arguments: %d %d %s %s %d \n", 
+           Xresize, Yresize, filename1.c_str(), filename2.c_str(), howManyImages);
 
-	Mat *imgsIn = new Mat[howManyRepeats];
-	Mat *imgsOut = new Mat[howManyRepeats];
+	Mat *imgsIn = new Mat[howManyImages];
+	Mat *imgsOut = new Mat[howManyImages];
 
-    for(int i=0; i<howManyRepeats; i++)
+    for(int i=0; i<howManyImages; i++)
     {
-		imgsIn[i] = imread(filename, CV_LOAD_IMAGE_COLOR);
+		imgsIn[i] = imread(i%2==0?filename1:filename2, CV_LOAD_IMAGE_COLOR);
 		imgsOut[i] = Mat(Yresize*imgsIn[i].rows, Xresize*imgsIn[i].cols, imgsIn[i].type());
     }
 
-	CUDA_bilinearInterpolation(imgsIn, imgsOut, howManyRepeats);
+	CUDA_bilinearInterpolation(imgsIn, imgsOut, howManyImages);
 
 	char outputFilePath[] = "./output/result";
 	char outputFileType[] = ".png";
 	char fullFilename[100];
-	for (int i = 0; i < howManyRepeats; i++)
+	for (int i = 0; i < howManyImages; i++)
 	{
 		sprintf(fullFilename,"%s%d%s",outputFilePath,i,outputFileType);
 		imwrite(fullFilename, imgsOut[i]);
