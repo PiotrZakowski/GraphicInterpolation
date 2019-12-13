@@ -7,9 +7,9 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-#define NEW_IMAGE_SIZE_WIDTH 5 // 7 // 21
-#define NEW_IMAGE_SIZE_HEIGHT 5 // 7 // 21
-#define NEW_IMAGE_REPEAT_NUMBER 6
+#define NEW_IMAGE_SIZE_WIDTH 11 // 7 // 21
+#define NEW_IMAGE_SIZE_HEIGHT 11 // 7 // 21
+#define NEW_IMAGE_REPEAT_NUMBER 9
 
 using namespace cv;
 using namespace std;
@@ -257,90 +257,93 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 
 	cudaError_t cudaStatus;
 	
-	//Wybieranie GPU
+	printf("\nSetting GPU device...\n");
 	cudaStatus = cudaSetDevice(0);
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-		//goto Error;
-	}
+	if (cudaStatus != cudaSuccess)
+		fprintf(stderr, "\t cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?\n");
+	else
+		fprintf(stdout, "\t CUDA-capable GPU found.\n");
 
-	//Tworzenie streamów
+	printf("\nCreating streams...\n");
 	int numberOfStreams = 2;
 	cudaStream_t streams[2];
 	
 	for (int i = 0; i < numberOfStreams; i++)
 	{
 		cudaStatus = cudaStreamCreate(&streams[i]);
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaStreamCreate returned error code %d after launching kernel!\n", cudaStatus);
-			//goto Error;
-		}
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t cudaStreamCreate returned error code %d after launching kernel!\n", cudaStatus);
+		else
+			fprintf(stdout, "\t Stream created.\n");
 	}
 
-	uchar *h_imgInPin[2], **h_imgOutPin;
+	printf("\nAllocating host memory for resources...\n");
+	uchar **h_imgInPin, **h_imgOutPin;
 	uchar *d_imgIn[2], *d_imgOut[2];
 
-	//przygotowanie
-	h_imgOutPin = (uchar**)malloc(numberOfImages);
+	h_imgInPin = (uchar**)malloc(numberOfImages*sizeof(uchar *));
+	h_imgOutPin = (uchar**)malloc(numberOfImages*sizeof(uchar *));
 	for (int i = 0; i < numberOfImages; i++)
 	{
-		cudaStatus = cudaMallocHost((void**)&h_imgOutPin[i], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMalloc failed!");
-			//goto Error;
-		}
+		printf("\t Allocating image nr %d...\n", i);
+		cudaStatus = cudaMallocHost((void**)&h_imgInPin[i], inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar), cudaHostAllocPortable);
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t\t cudaMalloc failed!\n");
+		else
+			fprintf(stdout, "\t\t Memory for input image allocated.\n");
+
+		memcpy(h_imgInPin[i], inputImages[i].data, inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar));
+
+		cudaStatus = cudaMallocHost((void**)&h_imgOutPin[i], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar), cudaHostAllocPortable);
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t\t cudaMalloc failed!\n");
+		else
+			fprintf(stdout, "\t\t Memory for output image allocated.\n");
 	}
 
-	//Glowna petla programu - dla kazdego zdjecia wykonaj interpolacje
+	printf("\nProcesing images\n");
 	int streamIndex = 0;
-
 	for (int i = 0; i < numberOfImages; i++)
 	{
+		printf("\nProcessing image nr %d.\n", i+1);
 		int nextStreamIndex = (streamIndex + 1) % numberOfStreams;
 		
-		//Alokowanie macierzy z openCV na GPU
+		printf("Allocating memory on GPU for resources...\n");
 		if (i + 1 != numberOfImages)
 		{
-			cudaStatus = cudaMallocHost((void**)&h_imgInPin[nextStreamIndex], inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaMalloc failed!");
-				//goto Error;
-			}
-			memcpy(h_imgInPin[nextStreamIndex], inputImages[i + 1].data, inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
-
 			cudaStatus = cudaMalloc((void**)&d_imgIn[1], inputImages[i + 1].rows*inputImages[i + 1].cols * inputImages[i + 1].channels() * sizeof(uchar));
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaMalloc failed!");
-				//goto Error;
-			}
+			if (cudaStatus != cudaSuccess)
+				fprintf(stderr, "\t cudaMalloc failed!\n");
+			else
+				fprintf(stdout, "\t Memory for input image allocated.\n");
 		}
 
 		cudaStatus = cudaMalloc((void**)&d_imgOut[0], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMalloc failed!");
-			//goto Error;
-		}
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t cudaMalloc failed!\n");
+		else
+			fprintf(stdout, "\t Memory for output image allocated.\n");
 
-		//Pierwsze wyjatkowe kopiowanie dla pierwszego zdjecia
 		if (i == 0)
 		{
-			cudaStatus = cudaMalloc((void**)&d_imgIn[i], inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar));
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaMalloc failed!");
-				//goto Error;
-			}
-			cudaMemcpy(d_imgIn[i], inputImages[i].data, inputImages[i].rows*inputImages[i].cols * inputImages[i].channels() * sizeof(uchar),
-				cudaMemcpyHostToDevice);
+			printf("Handling up first image...\n");
+			cudaStatus = cudaMalloc((void**)&d_imgIn[0], inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar));
+			if (cudaStatus != cudaSuccess)
+				fprintf(stderr, "\t cudaMalloc failed!\n");
+			else
+				fprintf(stdout, "\t Memory for input image allocated.\n");
+			cudaMemcpyAsync(d_imgIn[0], h_imgInPin[0], inputImages[0].rows*inputImages[0].cols * inputImages[0].channels() * sizeof(uchar),
+				cudaMemcpyHostToDevice, streams[streamIndex]);
 		}
 
-		//Wyliczanie potrzebnych stalych
+		printf("Launching computations...\n");
 		int d_imgIn_step = inputImages[i].step;
 		int d_imgOut_step = outputImages[i].step;
 
 		int blockSizeY = outputImages[i].rows / inputImages[i].rows;
 		int blockSizeX = outputImages[i].cols / inputImages[i].cols;
 
-		//Wywolanie kernela
+		
 		const dim3 block(32, 32); //(16, 16);
 		const dim3 grid(16, 16);
 
@@ -349,94 +352,73 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 			d_imgOut[0], d_imgOut_step, outputImages[i].rows, outputImages[i].cols,
 			blockSizeY, blockSizeX);
 
-		//Nie dla ostatniego zdjecia
 		if (i+1 < numberOfImages)
 		{
-			//Laduj kolejne zdjecie
-			cudaStatus = cudaMemcpyAsync(d_imgIn[1], h_imgInPin[nextStreamIndex],
+			printf("\t Prefetching next image.\n");
+			cudaStatus = cudaMemcpyAsync(d_imgIn[1], h_imgInPin[i+1],
 				inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar),
 				cudaMemcpyHostToDevice, streams[nextStreamIndex]);
-			if (cudaStatus != cudaSuccess) {
-				fprintf(stderr, "cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
-				//goto Error;
-			}
+			if (cudaStatus != cudaSuccess)
+				fprintf(stderr, "\t\t cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
 		}
 
-		//Sprawdzenie czy wystapil blad w kernelu
+		//printf("Sprawdzenie czy wystapil blad w kernelu\n");
+		printf("\t Checking computations status...\n");
 		cudaStatus = cudaGetLastError();
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-			//goto Error;
-		}
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t\t kernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		else
+			fprintf(stdout, "\t\t Computations completed.\n");
 		
 		cudaFree(d_imgIn[0]);
-		/**/
-		cudaStatus = cudaMalloc((void**)&d_imgIn[0], inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar));
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMalloc failed!");
-			//goto Error;
-		}
-		cudaMemcpy(d_imgIn[0], d_imgIn[1], inputImages[i+1].rows*inputImages[i+1].cols * inputImages[i+1].channels() * sizeof(uchar),
-			cudaMemcpyDeviceToDevice);
-		cudaFree(d_imgIn[1]);
-		/**/
-		/*
-		d_imgIn[0] = d_imgIn[1];
-		*/
+		if (i + 1 < numberOfImages)
+			d_imgIn[0] = d_imgIn[1];
+
 		if(i!=0)
 			cudaFree(d_imgOut[1]);
-		/**/
-		cudaStatus = cudaMalloc((void**)&d_imgOut[1], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMalloc failed!");
-			//goto Error;
-		}
-		cudaMemcpy(d_imgOut[1], d_imgOut[0], outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar),
-			cudaMemcpyDeviceToDevice);
-		cudaFree(d_imgOut[0]);
-		/**/
-		/*
 		d_imgOut[1] = d_imgOut[0];
-		*/
-		//kopiowanie wyniku
+
+		//printf("Kopiowanie wyniku\n");
+		printf("Coping output from device to host.\n");
 		cudaStatus = cudaMemcpyAsync(h_imgOutPin[i], d_imgOut[1],
 			outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar),
 			cudaMemcpyDeviceToHost, streams[streamIndex]);
-		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
-			//goto Error;
-		}
-
-		if(i!=0)
-			cudaFreeHost(h_imgInPin[streamIndex]);
+		if (cudaStatus != cudaSuccess)
+			fprintf(stderr, "\t cudaMemcpyAsync failed: %s\n", cudaGetErrorString(cudaStatus));
 
 		streamIndex = nextStreamIndex;
 	}
 
-	//Czekanie na zakonczenie kerneli
+	printf("\nWaiting for computations to end...\n");
 	cudaStatus = cudaDeviceSynchronize();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
-		//goto Error;
-	}
+	if (cudaStatus != cudaSuccess)
+		fprintf(stderr, "\t cudaDeviceSynchronize returned error code %d after launching kernel!\n", cudaStatus);
+	else
+		fprintf(stdout, "\t Computations ended.\n");
 
+	printf("\nReading outputs...\n");
 	for (int i = 0; i < numberOfImages; i++)
 	{
 		memcpy(outputImages[i].data, h_imgOutPin[i],
 			outputImages[i].rows*outputImages[i].cols * outputImages[i].channels() * sizeof(uchar));
+	}
+	printf("\t Outputs readed.\n");
+
+	printf("\nFreeing allocated memory...\n");
+	free(h_imgInPin);
+	free(h_imgOutPin);
+	cudaFree(d_imgOut[1]);
+
+	for (int i = 0; i < numberOfImages; i++)
+	{
+		cudaFreeHost(h_imgInPin[i]);
 		cudaFreeHost(h_imgOutPin[i]);
 	}
-
-	//CUDA FREE
-//Error:
-	//free(h_imgOutPin);
-	cudaFree(d_imgIn[1]);
-	cudaFree(d_imgOut[1]);
 
 	for (int i = 0; i < numberOfStreams; i++)
 		cudaStreamDestroy(streams[i]);
 
-	cudaStatus = cudaDeviceSynchronize();
+	printf("\t Memory freed\n");
 	return cudaStatus;
 }
 
@@ -444,6 +426,8 @@ cudaError_t CUDA_bilinearInterpolation(Mat inputImages[], Mat outputImages[], in
 
 int main(int argc, char **argv) 
 {
+	clock_t tStart = clock();
+
     int Xresize, Yresize;
     string filename1, filename2;
     int howManyImages;
@@ -456,12 +440,12 @@ int main(int argc, char **argv)
 		filename2 = argv[4];
         howManyImages = atoi(argv[5]);
     }
-    else //domyœlnie
+    else //domyslnie
     {
         Xresize = NEW_IMAGE_SIZE_WIDTH;
         Yresize = NEW_IMAGE_SIZE_HEIGHT;
         filename1 = "./input/Lena.png";
-		filename2 = "./input/Icon.png";
+		filename2 = "./input/icon.png";
         howManyImages = NEW_IMAGE_REPEAT_NUMBER;
     }
     
@@ -474,6 +458,10 @@ int main(int argc, char **argv)
     for(int i=0; i<howManyImages; i++)
     {
 		imgsIn[i] = imread(i%2==0?filename1:filename2, CV_LOAD_IMAGE_COLOR);
+		//Mat dst;
+        //normalize(imgsIn[i], dst, 0, 1, cv::NORM_MINMAX);
+        //imshow("test", dst);
+        //waitKey(0);
 		imgsOut[i] = Mat(Yresize*imgsIn[i].rows, Xresize*imgsIn[i].cols, imgsIn[i].type());
     }
 
@@ -485,8 +473,23 @@ int main(int argc, char **argv)
 	for (int i = 0; i < howManyImages; i++)
 	{
 		sprintf(fullFilename,"%s%d%s",outputFilePath,i,outputFileType);
-		imwrite(fullFilename, imgsOut[i]);
+		try
+		{
+			imwrite(fullFilename, imgsOut[i]);
+		}
+		catch (const Exception e)
+		{
+			printf("%s", e.msg);
+		}
+		imgsIn[i].release();
+		imgsOut[i].release();
 	}
 	
+	double executionTime = (clock() - tStart) / (double)CLOCKS_PER_SEC;
+	int minutes = (int)executionTime / 60;
+	printf("\nExecution time: %dm%.3fs\n", minutes, executionTime - (double)(minutes * 60));
+
+	delete[] imgsIn;
+	delete[] imgsOut;
 	return 0;
 }
